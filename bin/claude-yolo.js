@@ -166,9 +166,26 @@ localClaudeDir = path.join(nodeModulesDir, 'node_modules', '@anthropic-ai', 'cla
 const claudeDir = globalClaudeDir || localClaudeDir;
 debug(`Using Claude installation from: ${claudeDir}`);
 
-// Set up CLI paths
-originalCliPath = path.join(claudeDir, 'cli.mjs');
-yoloCliPath = path.join(claudeDir, 'cli-yolo.mjs');
+// Set up CLI paths - check for both cli.mjs and cli.js
+let mjs = path.join(claudeDir, 'cli.mjs');
+let js = path.join(claudeDir, 'cli.js');
+
+// Determine which file exists
+if (fs.existsSync(js)) {
+  originalCliPath = js;
+  yoloCliPath = path.join(claudeDir, 'cli-yolo.js');
+  debug(`Found Claude CLI at ${originalCliPath} (js version)`);
+} else if (fs.existsSync(mjs)) {
+  originalCliPath = mjs;
+  yoloCliPath = path.join(claudeDir, 'cli-yolo.mjs');
+  debug(`Found Claude CLI at ${originalCliPath} (mjs version)`);
+} else {
+  // Default to mjs if neither exists (will fail later with clear error)
+  originalCliPath = mjs;
+  yoloCliPath = path.join(claudeDir, 'cli-yolo.mjs');
+  debug(`Could not find Claude CLI file, defaulting to ${originalCliPath}`);
+}
+
 consentFlagPath = path.join(claudeDir, '.claude-yolo-consent');
 
 // Main function to run the application
@@ -274,8 +291,14 @@ async function run() {
   process.argv.splice(2, 0, '--dangerously-skip-permissions');
   debug("Added --dangerously-skip-permissions flag to command line arguments");
 
-  // Now import the modified CLI
-  await import(yoloCliPath);
+  // Now import the modified CLI - handling both .js and .mjs files
+  try {
+    await import(yoloCliPath);
+  } catch (error) {
+    console.error(`Error importing Claude CLI: ${error.message}`);
+    debug(error.stack);
+    process.exit(1);
+  }
 }
 
 // Run the main function
