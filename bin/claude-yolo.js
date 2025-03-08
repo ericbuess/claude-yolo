@@ -89,7 +89,28 @@ async function checkForUpdates() {
     const latestVersion = execSync(latestVersionCmd).toString().trim();
     debug(`Latest Claude version on npm: ${latestVersion}`);
     
-    // Get our current installed version
+    // Get the global Claude version if available
+    let globalVersion;
+    if (globalClaudeDir) {
+      try {
+        const globalPackageJsonPath = path.join(globalClaudeDir, 'package.json');
+        if (fs.existsSync(globalPackageJsonPath)) {
+          const globalPackageJson = JSON.parse(fs.readFileSync(globalPackageJsonPath, 'utf8'));
+          globalVersion = globalPackageJson.version;
+          debug(`Global Claude version: ${globalVersion}`);
+          
+          // If using global version and it's already the latest, we're good
+          if (globalVersion === latestVersion) {
+            debug('Global Claude installation is already the latest version');
+            return;
+          }
+        }
+      } catch (error) {
+        debug(`Error reading global Claude package.json: ${error.message}`);
+      }
+    }
+    
+    // Get our current installed version from local package.json
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
     const dependencies = packageJson.dependencies || {};
     const currentVersion = dependencies['@anthropic-ai/claude-code'];
@@ -119,14 +140,56 @@ async function checkForUpdates() {
   }
 }
 
-// Path to the Claude CLI file
-const claudeDir = path.join(nodeModulesDir, 'node_modules', '@anthropic-ai', 'claude-code');
-const originalCliPath = path.join(claudeDir, 'cli.mjs');
-const yoloCliPath = path.join(claudeDir, 'cli-yolo.mjs');
-const consentFlagPath = path.join(claudeDir, '.claude-yolo-consent');
+// Look for globally installed Claude CLI first, then fall back to local
+let globalClaudeDir, localClaudeDir, originalCliPath, yoloCliPath, consentFlagPath;
+
+// Try to find global installation using 'which claude' or 'npm -g root'
+try {
+  // Find global node_modules
+  const globalNodeModules = execSync('npm -g root').toString().trim();
+  debug(`Global node_modules: ${globalNodeModules}`);
+  
+  // Check if Claude is installed globally
+  const potentialGlobalDir = path.join(globalNodeModules, '@anthropic-ai', 'claude-code');
+  if (fs.existsSync(potentialGlobalDir)) {
+    globalClaudeDir = potentialGlobalDir;
+    debug(`Found global Claude installation at: ${globalClaudeDir}`);
+  }
+} catch (error) {
+  debug(`Error finding global Claude installation: ${error.message}`);
+}
+
+// Set up local fallback paths
+localClaudeDir = path.join(nodeModulesDir, 'node_modules', '@anthropic-ai', 'claude-code');
+
+// Use global if available, otherwise use local
+const claudeDir = globalClaudeDir || localClaudeDir;
+debug(`Using Claude installation from: ${claudeDir}`);
+
+// Set up CLI paths
+originalCliPath = path.join(claudeDir, 'cli.mjs');
+yoloCliPath = path.join(claudeDir, 'cli-yolo.mjs');
+consentFlagPath = path.join(claudeDir, '.claude-yolo-consent');
 
 // Main function to run the application
 async function run() {
+  // Display which Claude installation we're using
+  console.log(`${CYAN}Using Claude installation from: ${claudeDir}${RESET}`);
+  
+  // If in DEBUG mode, show more detailed information
+  if (process.env.DEBUG) {
+    try {
+      // Get the package.json from the Claude directory
+      const claudePackageJsonPath = path.join(claudeDir, 'package.json');
+      if (fs.existsSync(claudePackageJsonPath)) {
+        const claudePackageJson = JSON.parse(fs.readFileSync(claudePackageJsonPath, 'utf8'));
+        console.log(`${CYAN}Claude version from package.json: ${claudePackageJson.version}${RESET}`);
+      }
+    } catch (error) {
+      debug(`Error reading Claude package.json: ${error.message}`);
+    }
+  }
+  
   // Check and update Claude package first
   await checkForUpdates();
 
