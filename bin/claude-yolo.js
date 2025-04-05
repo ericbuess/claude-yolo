@@ -202,14 +202,11 @@ const consentFlagPath = path.join(claudeDir, '.claude-yolo-consent');
 // Parse command line arguments
 const args = process.argv.slice(2);
 
-// Check for --autorun flag
-const autorunIndex = args.findIndex(arg => arg === '--autorun');
-const shouldAutorun = autorunIndex !== -1;
+// Check for .vibeautorun.md file in current directory
+const autorunFilePath = path.join(process.cwd(), '.vibeautorun.md');
+const shouldAutorun = fs.existsSync(autorunFilePath);
 
-// Remove --autorun flag if present
-if (shouldAutorun) {
-  args.splice(autorunIndex, 1);
-}
+debug(`Checking for autorun file at: ${autorunFilePath} - exists: ${shouldAutorun}`);
 
 // Main function to run the application
 async function run() {
@@ -321,21 +318,7 @@ async function run() {
 
     // Different execution based on whether we have autorun
     if (shouldAutorun) {
-      const autorunFilePath = path.join(process.cwd(), '.vibeautorun.md');
-      debug(`Checking for autorun file at: ${autorunFilePath}`);
-
-      // Check if the .vibeautorun.md file exists
-      if (!fs.existsSync(autorunFilePath)) {
-        console.log(`${YELLOW}Warning: --autorun flag provided but .vibeautorun.md not found in current directory.${RESET}`);
-        console.log(`Looking for file at: ${autorunFilePath}`);
-        console.log(`Running Claude CLI without autorun input.${RESET}`);
-
-        // Fall back to normal execution
-        const cmd = `node "${yoloCliPath}" --dangerously-skip-permissions ${args.join(' ')}`;
-        debug(`Executing: ${cmd}`);
-        execSync(cmd, { stdio: 'inherit' });
-        return;
-      }
+      debug(`Executing in autorun mode with file at: ${autorunFilePath}`);
 
       // Read the autorun file contents
       const autorunContent = fs.readFileSync(autorunFilePath, 'utf8');
