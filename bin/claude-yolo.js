@@ -5,7 +5,7 @@ import path from 'path';
 import os from 'os';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import readline from 'readline';
 
 // ANSI color codes
@@ -420,14 +420,61 @@ ${scriptContent}`);
         const autorunContent = fs.readFileSync(autorunFilePath, 'utf8');
         debug(`Found autorun file with content length: ${autorunContent.length} chars`);
         
-        // Use a shell script and input redirection for autorun
+        // Use a modified shell script with file monitoring for autorun
         console.log(`${YELLOW}Running in autorun mode with instructions from .vibeautorun.md${RESET}`);
         
         // Initialize tempScriptPath for the finally block
         let tempScriptPath;
         
         try {
-          // Create a temporary shell script for autorun
+          // Path to monitor for the done.txt signal file
+          const doneFilePath = path.join(process.cwd(), 'done.txt');
+          
+          // Remove any existing done.txt file to avoid false positives
+          if (fs.existsSync(doneFilePath)) {
+            fs.unlinkSync(doneFilePath);
+            debug(`Removed existing done.txt file`);
+          }
+          
+          // Create a simpler file watcher shell script that sends /exit
+          const watchScriptPath = path.join(os.tmpdir(), `claude-yolo-watch-${Date.now()}.sh`);
+          const watchScriptContent = `#!/bin/bash
+
+# Watch for done.txt and send /exit when it appears
+echo "Watching for ${doneFilePath}"
+
+while true; do
+  if [ -f "${doneFilePath}" ]; then
+    echo "Found done.txt, sending /exit command"
+    rm "${doneFilePath}" 2>/dev/null
+    # Send /exit to Claude
+    echo "/exit" > /dev/tty
+    # Give it time to exit
+    sleep 1
+    # Force kill this and all parent processes
+    echo "FORCE KILLING ALL PROCESSES..."
+    # The most aggressive approach possible for Mac
+    pkill -15 -P $$
+    pkill -15 -P $PPID
+    pkill -15 Claude
+    pkill -15 claude-yolo
+    # If all else fails, hard kill
+    pkill -9 -P $$
+    pkill -9 -P $PPID
+    pkill -9 Claude
+    pkill -9 claude-yolo
+    exit 0
+  fi
+  sleep 1
+done
+`;
+
+          
+          fs.writeFileSync(watchScriptPath, watchScriptContent);
+          fs.chmodSync(watchScriptPath, '755'); // Make executable
+          debug(`Created watch script at: ${watchScriptPath}`);
+          
+          // Create a shell script that runs Claude and starts the watcher
           tempScriptPath = path.join(os.tmpdir(), `claude-yolo-autorun-${Date.now()}.sh`);
           const scriptContent = `#!/bin/bash
 
@@ -439,10 +486,15 @@ cat > /tmp/command << 'EOL'
 ${autorunContent}
 EOL
 
-# Run Claude CLI with input first from consent file and then from command file
-(cat /tmp/consent && sleep 3 && cat /tmp/command && echo && sleep 1 && echo) | node "${yoloCliPath}" ${args.join(' ')}
+# Start the watcher in the same terminal
+"${watchScriptPath}" & 
+WATCHER_PID=$!
+
+# Run Claude CLI with input
+(cat /tmp/consent && sleep 3 && cat /tmp/command && echo) | node "${yoloCliPath}" ${args.join(' ')}
 
 # Clean up
+kill $WATCHER_PID 2>/dev/null
 rm /tmp/consent /tmp/command
 `;
           
@@ -454,6 +506,18 @@ rm /tmp/consent /tmp/command
           console.log(`${CYAN}Executing autorun script with commands from .vibeautorun.md${RESET}`);
           execSync(`bash "${tempScriptPath}"`, { stdio: 'inherit' });
           console.log(`${YELLOW}Autorun completed successfully${RESET}`);
+          
+          // Clean up scripts
+          try {
+            fs.unlinkSync(watchScriptPath);
+            debug(`Removed watch script: ${watchScriptPath}`);
+          } catch (err) {
+            debug(`Error removing watch script: ${err.message}`);
+          }
+          
+          // Force exit the process
+          process.exit(0);
+          
           return; // Exit after autorun completes
           
         } catch (err) {
